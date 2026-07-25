@@ -1,0 +1,42 @@
+@model BudgetTracker.ViewModels.BudgetDashboardViewModel
+@using System.Globalization
+
+<div class="card form-card h-100">
+    <div class="card-body p-3 p-md-4">
+        <h2 class="h5 mb-2">Create new budget</h2>
+        <p class="text-muted mb-3">Create another budget version for the month you are viewing.</p>
+
+        <form asp-action="CreateBudget" method="post" class="dashboard-form">
+            @Html.AntiForgeryToken()
+
+            <div class="mb-2">
+                <label class="form-label">Budget name</label>
+                <input class="form-control" type="text" name="name" placeholder="July budget 2" />
+            </div>
+
+            <div class="row g-3">
+                <div class="col-5">
+                    <label class="form-label">Year</label>
+                    <input class="form-control" type="number" name="year" value="@Model.Year" min="2024" max="2100" />
+                </div>
+
+                <div class="col-4">
+                    <label class="form-label">Month</label>
+                    <select class="form-select" name="month">
+                        @for (var i = 1; i <= 12; i++)
+                        {
+                            <option value="@i" selected="@(i == Model.Month)">@CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(i)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-3">
+                    <label class="form-label">Amount</label>
+                    <input class="form-control" type="number" step="0.01" name="totalBudget" placeholder="0.00" />
+                </div>
+            </div>
+
+            <button class="btn btn-primary w-100 mt-2" type="submit">Create budget</button>
+        </form>
+    </div>
+</div>

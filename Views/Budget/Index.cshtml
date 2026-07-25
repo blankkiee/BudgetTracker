@@ -1,0 +1,111 @@
+@model BudgetTracker.ViewModels.BudgetDashboardViewModel
+@using System.Globalization
+
+@{
+    ViewData["Title"] = "Budget Dashboard";
+    var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(Model.Month);
+    var currentMonthDate = new DateTime(Model.Year, Model.Month, 1);
+    var previousMonth = currentMonthDate.AddMonths(-1);
+    var nextMonth = currentMonthDate.AddMonths(1);
+}
+
+<div class="dashboard-shell">
+    <div class="dashboard-hero card mb-4">
+        <div class="card-body p-4 p-md-5">
+            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-start align-items-lg-center">
+                <div>
+                    <p class="dashboard-kicker mb-2">Monthly money plan</p>
+                    <h1 class="display-6 mb-1">Budget Dashboard</h1>
+                    <p class="mb-0 opacity-75">@monthName @Model.Year</p>
+                </div>
+
+                <div class="dashboard-pill">Mark</div>
+            </div>
+
+            @if (TempData["StatusMessage"] is string statusMessage)
+            {
+                <div class="alert alert-success mt-4 mb-0">@statusMessage</div>
+            }
+
+            @if (!ViewData.ModelState.IsValid)
+            {
+                <div class="alert alert-warning mt-4 mb-0" asp-validation-summary="All"></div>
+            }
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-md-4">
+            <div class="card metric-card h-100">
+                <div class="card-body">
+                    <p class="metric-label mb-1">Monthly budget</p>
+                    <div class="metric-value">@Model.TotalBudget.ToString("C")</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card metric-card h-100">
+                <div class="card-body">
+                    <p class="metric-label mb-1">Spent</p>
+                    <div class="metric-value">@Model.TotalSpent.ToString("C")</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-md-4">
+            <div class="card metric-card h-100 metric-card-accent">
+                <div class="card-body">
+                    <p class="metric-label mb-1">Remaining</p>
+                    <div class="metric-value">@Model.Remaining.ToString("C")</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-8">
+            @await Html.PartialAsync("_MonthSelectorCard", Model)
+        </div>
+
+        <div class="col-lg-4">
+            @await Html.PartialAsync("_CreateBudgetCard", Model)
+        </div>
+    </div>
+
+    <div class="row g-4 mb-4">
+        <div class="col-lg-6">
+            @await Html.PartialAsync("_SelectedBudgetCard", Model)
+        </div>
+
+        <div class="col-lg-6">
+            @await Html.PartialAsync("_AddCategoryCard", Model)
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h2 class="h4 mb-0">Categories</h2>
+        <span class="text-muted">@Model.Categories.Count category(s)</span>
+    </div>
+
+    @if (!Model.Categories.Any())
+    {
+        <div class="card empty-state">
+            <div class="card-body p-4">
+                <h3 class="h5 mb-2">No categories yet</h3>
+                <p class="mb-0 text-muted">Create a category and start logging expenses like groceries or gas.</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="row g-4">
+            @foreach (var category in Model.Categories)
+            {
+                <div class="col-12">
+                    @await Html.PartialAsync("_CategoryCard", category)
+                </div>
+            }
+        </div>
+    }
+</div>
