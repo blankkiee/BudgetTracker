@@ -1,13 +1,19 @@
+using System.Security.Claims;
 using BudgetTracker.Data;
 using BudgetTracker.Models;
 using BudgetTracker.ViewModels;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace BudgetTracker.Controllers;
 
+[Authorize]
 public class BudgetController : Controller
 {
+    private const int MinYear = 2000;
+    private const int MaxYear = 2100;
+
     private readonly ApplicationDbContext _context;
 
     public BudgetController(ApplicationDbContext context)
@@ -15,20 +21,30 @@ public class BudgetController : Controller
         _context = context;
     }
 
+    private int CurrentUserId => int.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
     [HttpGet]
     public async Task<IActionResult> Index(int? year, int? month, int? budgetMonthId)
     {
-        var currentDate = DateTime.Today;
-        var selectedYear = year ?? currentDate.Year;
-        var selectedMonth = month ?? currentDate.Month;
+        var userId = CurrentUserId;
+        var selectedYear = ClampYear(year);
+        var selectedMonth = ClampMonth(month);
 
         if (budgetMonthId.HasValue)
         {
-            var selectedBudget = await _context.BudgetMonths.FirstOrDefaultAsync(b => b.Id == budgetMonthId.Value);
+            var selectedBudget = await _context.BudgetMonths
+                .FirstOrDefaultAsync(b => b.Id == budgetMonthId.Value && b.UserId == userId);
+
             if (selectedBudget is not null)
             {
                 selectedYear = selectedBudget.Year;
                 selectedMonth = selectedBudget.Month;
+            }
+            else
+            {
+                // Someone else's budget id, or one that no longer exists: fall back to
+                // this user's own data rather than acknowledging that the id exists.
+                budgetMonthId = null;
             }
         }
 
@@ -37,67 +53,78 @@ public class BudgetController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> CreateBudget(int year, int month, string name, decimal totalBudget)
+    public async Task<IActionResult> CreateBudget(CreateBudgetRequest request)
     {
-        if (!IsValidMonth(year, month))
-        {
-            ModelState.AddModelError(string.Empty, "Choose a valid month before creating a budget.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
-        }
+        var userId = CurrentUserId;
 
-        if (string.IsNullOrWhiteSpace(name))
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Budget name is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(year, month));
-        }
-
-        if (totalBudget < 0)
-        {
-            ModelState.AddModelError(string.Empty, "Budget amount cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(year, month));
+            return await IndexWithErrors(request.Year, request.Month);
         }
 
         var budgetMonth = new BudgetMonth
         {
-            Year = year,
-            Month = month,
-            Name = name.Trim(),
-            TotalBudget = totalBudget
+            UserId = userId,
+            Year = request.Year,
+            Month = request.Month,
+            Name = request.Name.Trim(),
+            TotalBudget = request.TotalBudget
         };
+
+        var copiedCategoryCount = 0;
+
+        if (request.CopyCategoriesFromPreviousMonth)
+        {
+            var previousMonth = new DateTime(request.Year, request.Month, 1).AddMonths(-1);
+
+            var sourceBudget = await _context.BudgetMonths
+                .Include(b => b.Categories)
+                .Where(b => b.UserId == userId && b.Year == previousMonth.Year && b.Month == previousMonth.Month)
+                .OrderByDescending(b => b.Id)
+                .FirstOrDefaultAsync();
+
+            if (sourceBudget is not null)
+            {
+                budgetMonth.Categories = sourceBudget.Categories
+                    .Select(c => new CategoryBudget { Name = c.Name, BudgetAmount = c.BudgetAmount })
+                    .ToList();
+
+                copiedCategoryCount = budgetMonth.Categories.Count;
+            }
+        }
 
         _context.BudgetMonths.Add(budgetMonth);
         await _context.SaveChangesAsync();
 
-        TempData["StatusMessage"] = "Budget created.";
-        return RedirectToAction(nameof(Index), new { year, month, budgetMonthId = budgetMonth.Id });
+        TempData["StatusMessage"] = copiedCategoryCount > 0
+            ? $"Budget created with {copiedCategoryCount} category(s) copied from the previous month."
+            : "Budget created.";
+
+        return RedirectToAction(nameof(Index), new { request.Year, request.Month, budgetMonthId = budgetMonth.Id });
     }
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> SetMonthlyBudget(int budgetMonthId, string name, decimal totalBudget)
+    public async Task<IActionResult> SetMonthlyBudget(UpdateBudgetRequest request)
     {
-        var budgetMonth = await _context.BudgetMonths.FirstOrDefaultAsync(b => b.Id == budgetMonthId);
+        var userId = CurrentUserId;
+
+        var budgetMonth = await _context.BudgetMonths
+            .FirstOrDefaultAsync(b => b.Id == request.BudgetMonthId && b.UserId == userId);
 
         if (budgetMonth is null)
         {
             ModelState.AddModelError(string.Empty, "Selected budget was not found.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
+            return await IndexWithErrors(DateTime.Today.Year, DateTime.Today.Month);
         }
 
-        if (string.IsNullOrWhiteSpace(name))
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Budget name is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id));
+            return await IndexWithErrors(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id);
         }
 
-        if (totalBudget < 0)
-        {
-            ModelState.AddModelError(string.Empty, "Budget amount cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id));
-        }
-
-        budgetMonth.Name = name.Trim();
-        budgetMonth.TotalBudget = totalBudget;
+        budgetMonth.Name = request.Name.Trim();
+        budgetMonth.TotalBudget = request.TotalBudget;
 
         await _context.SaveChangesAsync();
 
@@ -109,7 +136,10 @@ public class BudgetController : Controller
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteMonthlyBudget(int budgetMonthId)
     {
-        var budgetMonth = await _context.BudgetMonths.FirstOrDefaultAsync(b => b.Id == budgetMonthId);
+        var userId = CurrentUserId;
+
+        var budgetMonth = await _context.BudgetMonths
+            .FirstOrDefaultAsync(b => b.Id == budgetMonthId && b.UserId == userId);
 
         if (budgetMonth is null)
         {
@@ -124,7 +154,7 @@ public class BudgetController : Controller
         await _context.SaveChangesAsync();
 
         var fallbackBudget = await _context.BudgetMonths
-            .Where(b => b.Year == year && b.Month == month)
+            .Where(b => b.UserId == userId && b.Year == year && b.Month == month)
             .OrderByDescending(b => b.Id)
             .FirstOrDefaultAsync();
 
@@ -136,33 +166,29 @@ public class BudgetController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> AddCategory(int budgetMonthId, string name, decimal budgetAmount)
+    public async Task<IActionResult> AddCategory(AddCategoryRequest request)
     {
-        var budgetMonth = await _context.BudgetMonths.FindAsync(budgetMonthId);
+        var userId = CurrentUserId;
+
+        var budgetMonth = await _context.BudgetMonths
+            .FirstOrDefaultAsync(b => b.Id == request.BudgetMonthId && b.UserId == userId);
 
         if (budgetMonth is null)
         {
             ModelState.AddModelError(string.Empty, "Save or create the selected budget before adding categories.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
+            return await IndexWithErrors(DateTime.Today.Year, DateTime.Today.Month);
         }
 
-        if (string.IsNullOrWhiteSpace(name))
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Category name is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id));
-        }
-
-        if (budgetAmount < 0)
-        {
-            ModelState.AddModelError(string.Empty, "Category budget cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id));
+            return await IndexWithErrors(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id);
         }
 
         _context.CategoryBudgets.Add(new CategoryBudget
         {
-            BudgetMonthId = budgetMonthId,
-            Name = name.Trim(),
-            BudgetAmount = budgetAmount
+            BudgetMonthId = budgetMonth.Id,
+            Name = request.Name.Trim(),
+            BudgetAmount = request.BudgetAmount
         });
 
         await _context.SaveChangesAsync();
@@ -173,46 +199,37 @@ public class BudgetController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> SaveCategory(int categoryBudgetId, string name, decimal budgetAmount)
+    public async Task<IActionResult> SaveCategory(SaveCategoryRequest request)
     {
-        var category = await _context.CategoryBudgets
-            .Include(c => c.BudgetMonth)
-            .FirstOrDefaultAsync(c => c.Id == categoryBudgetId);
+        var category = await FindOwnedCategory(request.CategoryBudgetId);
 
-        if (category is null)
+        if (category?.BudgetMonth is null)
         {
             ModelState.AddModelError(string.Empty, "Category not found.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
+            return await IndexWithErrors(DateTime.Today.Year, DateTime.Today.Month);
         }
 
-        if (string.IsNullOrWhiteSpace(name))
+        var budgetMonth = category.BudgetMonth;
+
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Category name is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(category.BudgetMonth!.Year, category.BudgetMonth.Month, category.BudgetMonth.Id));
+            return await IndexWithErrors(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id);
         }
 
-        if (budgetAmount < 0)
-        {
-            ModelState.AddModelError(string.Empty, "Category budget cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(category.BudgetMonth!.Year, category.BudgetMonth.Month, category.BudgetMonth.Id));
-        }
-
-        category.Name = name.Trim();
-        category.BudgetAmount = budgetAmount;
+        category.Name = request.Name.Trim();
+        category.BudgetAmount = request.BudgetAmount;
 
         await _context.SaveChangesAsync();
 
         TempData["StatusMessage"] = "Category updated.";
-        return RedirectToAction(nameof(Index), new { year = category.BudgetMonth?.Year, month = category.BudgetMonth?.Month, budgetMonthId = category.BudgetMonth?.Id });
+        return RedirectToAction(nameof(Index), new { year = budgetMonth.Year, month = budgetMonth.Month, budgetMonthId = budgetMonth.Id });
     }
 
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteCategory(int categoryBudgetId)
     {
-        var category = await _context.CategoryBudgets
-            .Include(c => c.BudgetMonth)
-            .FirstOrDefaultAsync(c => c.Id == categoryBudgetId);
+        var category = await FindOwnedCategory(categoryBudgetId);
 
         if (category is null)
         {
@@ -233,89 +250,71 @@ public class BudgetController : Controller
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> AddExpense(int categoryBudgetId, string description, decimal amount, DateTime purchasedAt)
+    public async Task<IActionResult> AddExpense(AddExpenseRequest request)
     {
-        var category = await _context.CategoryBudgets
-            .Include(c => c.BudgetMonth)
-            .FirstOrDefaultAsync(c => c.Id == categoryBudgetId);
+        var category = await FindOwnedCategory(request.CategoryBudgetId);
 
-        if (category is null)
+        if (category?.BudgetMonth is null)
         {
             ModelState.AddModelError(string.Empty, "Category not found.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
+            return await IndexWithErrors(DateTime.Today.Year, DateTime.Today.Month);
         }
 
-        if (string.IsNullOrWhiteSpace(description))
-        {
-            ModelState.AddModelError(string.Empty, "Expense description is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(category.BudgetMonth!.Year, category.BudgetMonth.Month, category.BudgetMonth.Id));
-        }
+        var budgetMonth = category.BudgetMonth;
 
-        if (amount < 0)
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Expense amount cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(category.BudgetMonth!.Year, category.BudgetMonth.Month, category.BudgetMonth.Id));
+            return await IndexWithErrors(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id);
         }
 
         _context.Expenses.Add(new Expense
         {
-            CategoryBudgetId = categoryBudgetId,
-            Description = description.Trim(),
-            Amount = amount,
-            PurchasedAt = purchasedAt == default ? DateTime.Today : purchasedAt
+            CategoryBudgetId = category.Id,
+            Description = request.Description.Trim(),
+            Amount = request.Amount,
+            PurchasedAt = request.PurchasedAt ?? DateTime.Today
         });
 
         await _context.SaveChangesAsync();
 
         TempData["StatusMessage"] = "Expense added.";
-        return RedirectToAction(nameof(Index), new { year = category.BudgetMonth?.Year, month = category.BudgetMonth?.Month, budgetMonthId = category.BudgetMonth?.Id });
+        return RedirectToAction(nameof(Index), new { year = budgetMonth.Year, month = budgetMonth.Month, budgetMonthId = budgetMonth.Id });
     }
 
     [HttpPost]
     [ValidateAntiForgeryToken]
-    public async Task<IActionResult> SaveExpense(int expenseId, int categoryBudgetId, string description, decimal amount, DateTime purchasedAt)
+    public async Task<IActionResult> SaveExpense(SaveExpenseRequest request)
     {
-        var expense = await _context.Expenses
-            .Include(e => e.CategoryBudget)
-            .ThenInclude(c => c!.BudgetMonth)
-            .FirstOrDefaultAsync(e => e.Id == expenseId);
+        var expense = await FindOwnedExpense(request.ExpenseId);
 
-        if (expense is null)
+        if (expense?.CategoryBudget?.BudgetMonth is null)
         {
             ModelState.AddModelError(string.Empty, "Expense not found.");
-            return View(nameof(Index), await BuildDashboardViewModel(DateTime.Today.Year, DateTime.Today.Month));
+            return await IndexWithErrors(DateTime.Today.Year, DateTime.Today.Month);
         }
 
-        if (string.IsNullOrWhiteSpace(description))
+        var budgetMonth = expense.CategoryBudget.BudgetMonth;
+
+        if (!ModelState.IsValid)
         {
-            ModelState.AddModelError(string.Empty, "Expense description is required.");
-            return View(nameof(Index), await BuildDashboardViewModel(expense.CategoryBudget!.BudgetMonth!.Year, expense.CategoryBudget.BudgetMonth.Month, expense.CategoryBudget.BudgetMonth.Id));
+            return await IndexWithErrors(budgetMonth.Year, budgetMonth.Month, budgetMonth.Id);
         }
 
-        if (amount < 0)
-        {
-            ModelState.AddModelError(string.Empty, "Expense amount cannot be negative.");
-            return View(nameof(Index), await BuildDashboardViewModel(expense.CategoryBudget!.BudgetMonth!.Year, expense.CategoryBudget.BudgetMonth.Month, expense.CategoryBudget.BudgetMonth.Id));
-        }
-
-        expense.Description = description.Trim();
-        expense.Amount = amount;
-        expense.PurchasedAt = purchasedAt == default ? expense.PurchasedAt : purchasedAt;
+        expense.Description = request.Description.Trim();
+        expense.Amount = request.Amount;
+        expense.PurchasedAt = request.PurchasedAt ?? expense.PurchasedAt;
 
         await _context.SaveChangesAsync();
 
         TempData["StatusMessage"] = "Expense updated.";
-        return RedirectToAction(nameof(Index), new { year = expense.CategoryBudget?.BudgetMonth?.Year, month = expense.CategoryBudget?.BudgetMonth?.Month, budgetMonthId = expense.CategoryBudget?.BudgetMonth?.Id });
+        return RedirectToAction(nameof(Index), new { year = budgetMonth.Year, month = budgetMonth.Month, budgetMonthId = budgetMonth.Id });
     }
 
     [HttpPost]
     [ValidateAntiForgeryToken]
     public async Task<IActionResult> DeleteExpense(int expenseId)
     {
-        var expense = await _context.Expenses
-            .Include(e => e.CategoryBudget)
-            .ThenInclude(c => c!.BudgetMonth)
-            .FirstOrDefaultAsync(e => e.Id == expenseId);
+        var expense = await FindOwnedExpense(expenseId);
 
         if (expense is null)
         {
@@ -334,17 +333,44 @@ public class BudgetController : Controller
         return RedirectToAction(nameof(Index), new { year, month, budgetMonthId });
     }
 
+    // Ownership is part of the lookup, so another user's id simply comes back null
+    // and every caller then reports "not found".
+    private Task<CategoryBudget?> FindOwnedCategory(int categoryBudgetId)
+    {
+        var userId = CurrentUserId;
+
+        return _context.CategoryBudgets
+            .Include(c => c.BudgetMonth)
+            .FirstOrDefaultAsync(c => c.Id == categoryBudgetId && c.BudgetMonth!.UserId == userId);
+    }
+
+    private Task<Expense?> FindOwnedExpense(int expenseId)
+    {
+        var userId = CurrentUserId;
+
+        return _context.Expenses
+            .Include(e => e.CategoryBudget)
+            .ThenInclude(c => c!.BudgetMonth)
+            .FirstOrDefaultAsync(e => e.Id == expenseId && e.CategoryBudget!.BudgetMonth!.UserId == userId);
+    }
+
+    private async Task<IActionResult> IndexWithErrors(int year, int month, int? budgetMonthId = null)
+    {
+        return View(nameof(Index), await BuildDashboardViewModel(ClampYear(year), ClampMonth(month), budgetMonthId));
+    }
+
     private async Task<BudgetDashboardViewModel> BuildDashboardViewModel(int year, int month, int? budgetMonthId = null)
     {
+        var userId = CurrentUserId;
+
         var availableBudgets = await _context.BudgetMonths
-            .Where(b => b.Year == year && b.Month == month)
+            .Where(b => b.UserId == userId && b.Year == year && b.Month == month)
             .OrderByDescending(b => b.Id)
             .Select(b => new BudgetMonthSummaryViewModel
             {
                 Id = b.Id,
                 Name = b.Name,
-                TotalBudget = b.TotalBudget,
-                IsSelected = budgetMonthId.HasValue && b.Id == budgetMonthId.Value
+                TotalBudget = b.TotalBudget
             })
             .ToListAsync();
 
@@ -352,7 +378,7 @@ public class BudgetController : Controller
             ? await _context.BudgetMonths
                 .Include(b => b.Categories)
                 .ThenInclude(c => c.Expenses)
-                .FirstOrDefaultAsync(b => b.Id == budgetMonthId.Value)
+                .FirstOrDefaultAsync(b => b.Id == budgetMonthId.Value && b.UserId == userId)
             : null;
 
         if (selectedBudget is null)
@@ -360,10 +386,21 @@ public class BudgetController : Controller
             selectedBudget = await _context.BudgetMonths
                 .Include(b => b.Categories)
                 .ThenInclude(c => c.Expenses)
-                .Where(b => b.Year == year && b.Month == month)
+                .Where(b => b.UserId == userId && b.Year == year && b.Month == month)
                 .OrderByDescending(b => b.Id)
                 .FirstOrDefaultAsync();
         }
+
+        // Marked after the fallback resolves, so the sidebar highlights the budget
+        // actually on screen even when the URL carries no explicit id.
+        foreach (var summary in availableBudgets)
+        {
+            summary.IsSelected = summary.Id == selectedBudget?.Id;
+        }
+
+        var previousMonth = new DateTime(year, month, 1).AddMonths(-1);
+        var hasPreviousMonthBudget = await _context.BudgetMonths
+            .AnyAsync(b => b.UserId == userId && b.Year == previousMonth.Year && b.Month == previousMonth.Month);
 
         return new BudgetDashboardViewModel
         {
@@ -373,6 +410,7 @@ public class BudgetController : Controller
             Month = month,
             TotalBudget = selectedBudget?.TotalBudget ?? 0,
             TotalSpent = selectedBudget?.Categories.Sum(c => c.Expenses.Sum(e => e.Amount)) ?? 0,
+            HasPreviousMonthBudget = hasPreviousMonthBudget,
             AvailableBudgets = availableBudgets,
             Categories = selectedBudget?.Categories
                 .OrderBy(c => c.Name)
@@ -397,8 +435,13 @@ public class BudgetController : Controller
         };
     }
 
-    private static bool IsValidMonth(int year, int month)
+    private static int ClampYear(int? year)
     {
-        return year >= 1 && month is >= 1 and <= 12;
+        return year is >= MinYear and <= MaxYear ? year.Value : DateTime.Today.Year;
+    }
+
+    private static int ClampMonth(int? month)
+    {
+        return month is >= 1 and <= 12 ? month.Value : DateTime.Today.Month;
     }
 }

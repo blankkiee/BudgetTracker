@@ -1,0 +1,66 @@
+@model BudgetTracker.ViewModels.BudgetDashboardViewModel
+@using System.Globalization
+
+@{
+    var currentMonthDate = new DateTime(Model.Year, Model.Month, 1);
+    var previousMonth = currentMonthDate.AddMonths(-1);
+    var nextMonth = currentMonthDate.AddMonths(1);
+}
+
+<div class="side-heading">Main</div>
+
+<a class="side-link is-active" asp-action="Index">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" />
+        <rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" />
+    </svg>
+    Dashboard
+</a>
+
+<div class="side-heading">Month</div>
+
+<div class="side-months">
+    <a class="btn btn-sm" asp-action="Index" asp-route-year="@DateTime.Today.Year" asp-route-month="@DateTime.Today.Month">This month</a>
+    <a class="btn btn-sm" asp-action="Index" asp-route-year="@previousMonth.Year" asp-route-month="@previousMonth.Month">Previous</a>
+    <a class="btn btn-sm" asp-action="Index" asp-route-year="@nextMonth.Year" asp-route-month="@nextMonth.Month">Next</a>
+</div>
+
+<form class="side-form" asp-action="Index" method="get">
+    <select name="month" aria-label="Month" style="flex: 1 1 auto; min-width: 0;">
+        @for (var i = 1; i <= 12; i++)
+        {
+            <option value="@i" selected="@(i == Model.Month)">@CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedMonthName(i)</option>
+        }
+    </select>
+
+    <input type="number" name="year" min="2000" max="2100" value="@Model.Year" aria-label="Year" style="flex: 0 0 4.9rem;" />
+
+    <button class="btn btn-sm" type="submit">Go</button>
+</form>
+
+@if (Model.AvailableBudgets.Any())
+{
+    <div class="side-heading">Budgets this month</div>
+
+    <div class="side-versions">
+        @foreach (var budget in Model.AvailableBudgets)
+        {
+            <a class="side-version @(budget.IsSelected ? "is-active" : "")" asp-action="Index" asp-route-year="@Model.Year" asp-route-month="@Model.Month" asp-route-budgetMonthId="@budget.Id">
+                <span>@budget.Name</span>
+                <small>@budget.TotalBudget.ToString("N0")</small>
+            </a>
+        }
+    </div>
+}
+
+<div class="side-heading">Actions</div>
+
+<div class="side-actions">
+    <button class="btn btn-sm" type="button" data-panel-target="panel-new-budget" aria-expanded="false">New budget</button>
+
+    @if (Model.BudgetMonthId is not null)
+    {
+        <button class="btn btn-sm" type="button" data-panel-target="panel-edit-budget" aria-expanded="false">Edit budget</button>
+        <button class="btn btn-sm btn-primary" type="button" data-panel-target="panel-add-category" aria-expanded="false">Add category</button>
+    }
+</div>
