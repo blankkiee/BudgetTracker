@@ -18,6 +18,16 @@
       "environmentVariables": {
         "ASPNETCORE_ENVIRONMENT": "Development"
       }
+    },
+    "lan": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": false,
+      "applicationUrl": "http://0.0.0.0:5077",
+      "environmentVariables": {
+        "//": "Production deliberately: the developer exception page would leak stack traces and source to anyone on the network.",
+        "ASPNETCORE_ENVIRONMENT": "Production"
+      }
     }
   }
 }

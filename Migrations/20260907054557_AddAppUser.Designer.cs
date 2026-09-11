@@ -3,6 +3,7 @@ using System;
 using BudgetTracker.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -10,9 +11,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace BudgetTracker.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260907054557_AddAppUser")]
+    partial class AddAppUser
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
@@ -58,15 +61,10 @@ namespace BudgetTracker.Migrations
                     b.Property<decimal>("TotalBudget")
                         .HasColumnType("TEXT");
 
-                    b.Property<int?>("UserId")
-                        .HasColumnType("INTEGER");
-
                     b.Property<int>("Year")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("UserId");
 
                     b.ToTable("BudgetMonths");
                 });
@@ -118,16 +116,6 @@ namespace BudgetTracker.Migrations
                     b.HasIndex("CategoryBudgetId");
 
                     b.ToTable("Expenses");
-                });
-
-            modelBuilder.Entity("BudgetTracker.Models.BudgetMonth", b =>
-                {
-                    b.HasOne("BudgetTracker.Models.AppUser", "User")
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade);
-
-                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("BudgetTracker.Models.CategoryBudget", b =>

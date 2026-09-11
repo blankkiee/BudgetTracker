@@ -2,110 +2,185 @@
 @using System.Globalization
 
 @{
-    ViewData["Title"] = "Budget Dashboard";
+    ViewData["Title"] = "Dashboard";
     var monthName = CultureInfo.CurrentCulture.DateTimeFormat.GetMonthName(Model.Month);
-    var currentMonthDate = new DateTime(Model.Year, Model.Month, 1);
-    var previousMonth = currentMonthDate.AddMonths(-1);
-    var nextMonth = currentMonthDate.AddMonths(1);
+    var hasBudget = Model.BudgetMonthId is not null;
 }
 
-<div class="dashboard-shell">
-    <div class="dashboard-hero card mb-4">
-        <div class="card-body p-4 p-md-5">
-            <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 align-items-start align-items-lg-center">
+@section Sidebar {
+    @await Html.PartialAsync("_Sidebar", Model)
+}
+
+<div class="pagetitle">
+    <div>
+        <h1>@monthName @Model.Year</h1>
+        <div class="crumb">@(hasBudget ? Model.BudgetName : "No budget for this month")</div>
+    </div>
+</div>
+
+@if (TempData["StatusMessage"] is string statusMessage)
+{
+    <div class="notice notice-ok">@statusMessage</div>
+}
+
+@if (!ViewData.ModelState.IsValid)
+{
+    <div class="notice notice-warn" asp-validation-summary="All"></div>
+}
+
+<div class="stats">
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-label">Monthly budget</div>
+            <div class="stat-row">
+                <span class="stat-icon">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 7h18v12a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" /><path d="M3 7l3-3h12l3 3" /><path d="M16 13h2" />
+                    </svg>
+                </span>
                 <div>
-                    <p class="dashboard-kicker mb-2">Monthly money plan</p>
-                    <h1 class="display-6 mb-1">Budget Dashboard</h1>
-                    <p class="mb-0 opacity-75">@monthName @Model.Year</p>
-                </div>
-
-                <div class="dashboard-pill">Mark</div>
-            </div>
-
-            @if (TempData["StatusMessage"] is string statusMessage)
-            {
-                <div class="alert alert-success mt-4 mb-0">@statusMessage</div>
-            }
-
-            @if (!ViewData.ModelState.IsValid)
-            {
-                <div class="alert alert-warning mt-4 mb-0" asp-validation-summary="All"></div>
-            }
-        </div>
-    </div>
-
-    <div class="row g-4 mb-4">
-        <div class="col-md-4">
-            <div class="card metric-card h-100">
-                <div class="card-body">
-                    <p class="metric-label mb-1">Monthly budget</p>
-                    <div class="metric-value">@Model.TotalBudget.ToString("C")</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card metric-card h-100">
-                <div class="card-body">
-                    <p class="metric-label mb-1">Spent</p>
-                    <div class="metric-value">@Model.TotalSpent.ToString("C")</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-md-4">
-            <div class="card metric-card h-100 metric-card-accent">
-                <div class="card-body">
-                    <p class="metric-label mb-1">Remaining</p>
-                    <div class="metric-value">@Model.Remaining.ToString("C")</div>
+                    <div class="stat-value">@Model.TotalBudget.ToString("C")</div>
+                    <div class="stat-note">@Model.Categories.Count category(s)</div>
                 </div>
             </div>
         </div>
     </div>
 
-    <div class="row g-4 mb-4">
-        <div class="col-lg-8">
-            @await Html.PartialAsync("_MonthSelectorCard", Model)
-        </div>
-
-        <div class="col-lg-4">
-            @await Html.PartialAsync("_CreateBudgetCard", Model)
-        </div>
-    </div>
-
-    <div class="row g-4 mb-4">
-        <div class="col-lg-6">
-            @await Html.PartialAsync("_SelectedBudgetCard", Model)
-        </div>
-
-        <div class="col-lg-6">
-            @await Html.PartialAsync("_AddCategoryCard", Model)
-        </div>
-    </div>
-
-    <div class="d-flex justify-content-between align-items-center mb-3">
-        <h2 class="h4 mb-0">Categories</h2>
-        <span class="text-muted">@Model.Categories.Count category(s)</span>
-    </div>
-
-    @if (!Model.Categories.Any())
-    {
-        <div class="card empty-state">
-            <div class="card-body p-4">
-                <h3 class="h5 mb-2">No categories yet</h3>
-                <p class="mb-0 text-muted">Create a category and start logging expenses like groceries or gas.</p>
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-label">Spent</div>
+            <div class="stat-row">
+                <span class="stat-icon is-bloom">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M6 2h12l1 20H5z" /><path d="M9 7h6M9 12h6M9 17h3" />
+                    </svg>
+                </span>
+                <div>
+                    <div class="stat-value">@Model.TotalSpent.ToString("C")</div>
+                    <div class="stat-note">@Model.PercentUsed% of budget</div>
+                </div>
             </div>
         </div>
-    }
-    else
-    {
-        <div class="row g-4">
-            @foreach (var category in Model.Categories)
-            {
-                <div class="col-12">
+    </div>
+
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-label">Remaining</div>
+            <div class="stat-row">
+                <span class="stat-icon @(Model.IsOverspent ? "is-over" : "is-leaf")">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <circle cx="12" cy="12" r="9" /><path d="M12 7v10M9 10h6M9 14h6" />
+                    </svg>
+                </span>
+                <div>
+                    <div class="stat-value @(Model.IsOverspent ? "is-over" : "")">@Model.Remaining.ToString("C")</div>
+                    <div class="stat-note">
+                        @if (Model.IsOverspent)
+                        {
+                            <b class="is-over">over budget</b>
+                        }
+                        else
+                        {
+                            <b>on track</b>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (hasBudget && Model.TotalBudget > 0)
+{
+    <div class="card">
+        <div class="card-body">
+            <div class="card-title">
+                Budget used
+                <span>@Model.PercentUsed% of @Model.TotalBudget.ToString("C")</span>
+            </div>
+
+            <div class="bar" role="progressbar" aria-valuenow="@Model.PercentUsed" aria-valuemin="0" aria-valuemax="100" aria-label="Share of the monthly budget spent">
+                <span class="bar-fill @(Model.IsOverspent ? "is-over" : Model.PercentUsed >= 80 ? "is-near" : "")" style="width: @Model.BarPercent%"></span>
+            </div>
+
+            <div class="stat-note" style="margin-top: 0.6rem;">
+                @if (Model.IsOverspent)
+                {
+                    <text>Over budget by <b class="is-over">@((Model.TotalSpent - Model.TotalBudget).ToString("C"))</b>.</text>
+                }
+                else
+                {
+                    <text><b>@Model.Remaining.ToString("C")</b> left to spend this month.</text>
+                }
+                @if (!Model.IsOverAllocated && Model.Unallocated > 0)
+                {
+                    <text>&nbsp;&middot;&nbsp;@Model.Unallocated.ToString("C") not yet assigned to a category.</text>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<div id="panel-new-budget" data-panel hidden>
+    @await Html.PartialAsync("_CreateBudgetCard", Model)
+</div>
+
+<div id="panel-edit-budget" data-panel hidden>
+    @await Html.PartialAsync("_SelectedBudgetCard", Model)
+</div>
+
+<div id="panel-add-category" data-panel hidden>
+    @await Html.PartialAsync("_AddCategoryCard", Model)
+</div>
+
+@if (Model.IsOverAllocated)
+{
+    <div class="notice notice-warn">
+        Categories total <span class="num">@Model.TotalCategoryAllocation.ToString("C")</span> &mdash;
+        <span class="num">@((Model.TotalCategoryAllocation - Model.TotalBudget).ToString("C"))</span>
+        more than the monthly budget.
+    </div>
+}
+
+<div class="card">
+    <div class="card-body">
+        <div class="card-title">
+            Categories
+            <span>@Model.Categories.Count total</span>
+        </div>
+
+        @if (!Model.Categories.Any())
+        {
+            <div class="empty">
+                @if (hasBudget)
+                {
+                    <p>No categories yet. Add one to start tracking expenses.</p>
+                    <button class="btn btn-primary" type="button" data-panel-target="panel-add-category" aria-expanded="false">Add a category</button>
+                }
+                else
+                {
+                    <p>There is no budget for @monthName @Model.Year yet.</p>
+                    <button class="btn btn-primary" type="button" data-panel-target="panel-new-budget" aria-expanded="false">Create a budget</button>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="rows-head">
+                <div>Category</div>
+                <div class="r">Spent</div>
+                <div class="r col-budget">Budget</div>
+                <div class="col-progress">Progress</div>
+                <div class="r">Used</div>
+                <div></div>
+            </div>
+
+            <div class="rows">
+                @foreach (var category in Model.Categories)
+                {
                     @await Html.PartialAsync("_CategoryCard", category)
-                </div>
-            }
-        </div>
-    }
+                }
+            </div>
+        }
+    </div>
 </div>
